@@ -1,7 +1,8 @@
 package org.tron.core.service;
 
+import static org.tron.core.store.DelegationStore.REMARK;
+
 import com.google.common.primitives.Bytes;
-import com.google.common.primitives.Longs;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.prometheus.client.Histogram;
@@ -125,8 +126,11 @@ public class RewardCalService {
       return;
     }
     long endCycle = delegationStore.getEndCycle(address);
+    if (endCycle >= newRewardCalStartCycle) {
+      return;
+    }
     //skip the last cycle reward
-    if (beginCycle + 1 == endCycle) {
+    if (endCycle != REMARK) {
       beginCycle += 1;
     }
     if (beginCycle >= newRewardCalStartCycle) {
@@ -143,7 +147,7 @@ public class RewardCalService {
     long reward = LongStream.range(beginCycle, newRewardCalStartCycle)
         .map(i -> computeReward(i, account))
         .sum();
-    rewardCacheStore.putReward(Bytes.concat(address, Longs.toByteArray(beginCycle)), reward);
+    this.putReward(address, beginCycle, endCycle, reward);
     Metrics.histogramObserve(requestTimer);
   }
 
@@ -180,6 +184,23 @@ public class RewardCalService {
   }
 
   public long getReward(byte[] address, long cycle) {
-    return rewardCacheStore.getReward(Bytes.concat(address, Longs.toByteArray(cycle)));
+    return rewardCacheStore.getReward(buildKey(address, cycle));
+  }
+
+  private void putReward(byte[] address, long start, long end, long reward) {
+    long startCycle = delegationStore.getBeginCycle(address);
+    long endCycle = delegationStore.getEndCycle(address);
+    //skip the last cycle reward
+    if (end != REMARK) {
+      startCycle += 1;
+    }
+    // check if the delegation is still valid
+    if (startCycle == start && endCycle == end) {
+      rewardCacheStore.putReward(buildKey(address, start), reward);
+    }
+  }
+
+  private byte[] buildKey(byte[] address, long beginCycle) {
+    return Bytes.concat(address, ByteArray.fromLong(beginCycle));
   }
 }
